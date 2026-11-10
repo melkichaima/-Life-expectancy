@@ -1,0 +1,259 @@
+---
+title: "How does life expectancy change over time for each continent?"
+author: ""
+date: ""
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+---
+
+# Setting up the problem
+
+Life expectancy, as it is reported for a single country, is already a
+summary statistic: it is the average number of years a newborn in that
+country is expected to live, given current mortality patterns. It is
+**not** something we can directly add up or average blindly across
+countries, because countries differ enormously in population size. A
+country of 5 million people and a country of 500 million people should
+not count equally when we ask "what is the life expectancy of a
+continent?", the larger country's experience should weigh more
+heavily, because it represents more actual human lives.
+
+This is the central reasoning challenge of the assignment: we are not
+just averaging a column of numbers, we are aggregating a *rate*
+(life expectancy, a per-person quantity) using *weights* (population,
+an extensive quantity). This is a classic weighted-mean problem, and
+getting the weighting right is the crux of the whole exercise.
+
+# Deriving the formula for a continent's life expectancy
+
+## Notation
+
+Let a continent contain $n$ countries, indexed $i = 1, \dots, n$, in a
+given year. For each country $i$ let:
+
+- $L_i$ = the life expectancy of country $i$ (years), and
+- $P_i$ = the population of country $i$.
+
+We want a single number $L_{\text{continent}}$ that represents the life
+expectancy of the continent as a whole, in a way that is faithful to
+"the average number of years a randomly chosen person on that
+continent is expected to live."
+
+## Why a simple (unweighted) average is wrong
+
+A naive approach would be to just average the $L_i$ values across the
+$n$ countries:
+
+$$
+L_{\text{naive}} = \frac{1}{n}\sum_{i=1}^{n} L_i
+$$
+
+This treats every country as equally important, regardless of whether
+it has 1 million or 1 billion people. Imagine a continent made of two
+countries: Country A with population 1,000,000,000 and life expectancy
+50 years, and Country B with population 1,000,000 and life expectancy
+80 years. The naive average gives $(50+80)/2 = 65$ years. But this
+number describes almost nobody: out of roughly 1.001 billion people on
+this continent, about 999 million of them live in a country where life
+expectancy is 50, and only about 1 million live where it is 80. The
+"typical" person on this continent experiences something very close to
+50 years, not 65. The naive average is biased toward whatever the
+small countries happen to look like, and it fails to answer the
+question "how long does the average *person* on this continent live,"
+which is really what we care about.
+
+## The correct approach: population-weighted mean
+
+To fix this, each country's life expectancy should be weighted by its
+share of the continent's total population. Define the continent's
+total population as:
+
+$$
+P_{\text{continent}} = \sum_{i=1}^{n} P_i
+$$
+
+Then the population-weighted life expectancy of the continent is:
+
+$$
+L_{\text{continent}} = \sum_{i=1}^{n} w_i \, L_i,
+\qquad \text{where} \qquad
+w_i = \frac{P_i}{P_{\text{continent}}} = \frac{P_i}{\sum_{j=1}^n P_j}
+$$
+
+Equivalently, written without the intermediate weight symbol:
+
+$$
+L_{\text{continent}} = \frac{\sum_{i=1}^{n} P_i \, L_i}{\sum_{i=1}^{n} P_i}
+$$
+
+## Why this formula is the right one
+
+This formula can be justified more rigorously, not just intuitively,
+by going back to what life expectancy actually represents.
+
+Country $i$'s life expectancy $L_i$ can be thought of as the average
+lifespan across the $P_i$ people living there. If we denote the
+(unobserved) lifespan of person $k$ in country $i$ as $\ell_{i,k}$,
+then by definition:
+
+$$
+L_i = \frac{1}{P_i} \sum_{k=1}^{P_i} \ell_{i,k}
+\quad \Longrightarrow \quad
+P_i L_i = \sum_{k=1}^{P_i} \ell_{i,k}
+$$
+
+That is, $P_i L_i$ is the *total number of life-years* "produced" by
+country $i$'s population (summing every individual's lifespan). Now,
+the true life expectancy of the continent should be the average
+lifespan across *every individual on the continent*, regardless of
+which country they live in:
+
+$$
+L_{\text{continent}} = \frac{1}{P_{\text{continent}}}
+\sum_{i=1}^{n} \sum_{k=1}^{P_i} \ell_{i,k}
+= \frac{1}{P_{\text{continent}}} \sum_{i=1}^{n} P_i L_i
+= \frac{\sum_{i=1}^n P_i L_i}{\sum_{i=1}^n P_i}
+$$
+
+This is exactly the population-weighted mean derived above. So the
+weighted formula is not an ad hoc fix, it is the *only* formula that
+is mathematically consistent with the definition of "life expectancy"
+as a per-person average, once we insist that every individual on the
+continent should count once and only once, no matter which country
+they happen to live in.
+
+## A caveat worth noting
+
+This derivation implicitly assumes that life expectancy, as reported
+for each country, is itself computed the same way (i.e., it already
+represents an unweighted average lifespan of that country's residents
+computed from mortality tables). It also assumes we hold the
+population figures fixed within the year being considered (i.e., we
+use each country's population at that same year as the weight, not
+some other year's population, otherwise the weights and the life
+expectancy numbers would be describing different points in time and
+the aggregation would no longer be internally consistent).
+
+# How this formula lets us track continents over time
+
+Once we have $L_{\text{continent}}(t)$ — the population-weighted life
+expectancy of a continent computed with the formula above, calculated
+separately for each year $t$ for which we have data, we obtain a time
+series, one value per year per continent. Plotting
+$L_{\text{continent}}(t)$ against $t$, with one line per continent, is
+exactly what shows us "how life expectancy changed over time for each
+continent."
+
+Reasoning about what such a plot should show, before even looking at
+it:
+
+- **Overall upward trend.** Across almost the entire twentieth century
+  and into the twenty-first, medical advances (vaccines, antibiotics,
+  sanitation, maternal and child health care) should push
+  $L_{\text{continent}}(t)$ upward over time for every continent. We
+  should expect the lines to generally slope upward from left to
+  right.
+
+- **Convergence rather than parallel lines.** Continents that started
+  the twentieth century with low life expectancy (because of poverty,
+  high infant mortality, and limited access to modern medicine) have
+  more "room to grow," and historically did grow faster in relative
+  terms once health interventions were adopted. Continents that
+  started already relatively high (e.g., where industrialization and
+  modern medicine arrived earlier) have less room to grow and their
+  lines should flatten out at a higher level. This usually produces a
+  pattern of **convergence**: the gap between the highest and lowest
+  continent narrows over time, even though the ranking of continents
+  (which one is highest, which is lowest) often stays roughly the same
+  throughout.
+
+- **Visible dips, not just steady growth.** A population-weighted
+  average will sharply register any event that kills a large number of
+  people in a populous country within a short time: wars, famines,
+  epidemics (such as the 1918 influenza pandemic, HIV/AIDS in
+  Sub-Saharan Africa in the 1990s, or COVID-19 around 2020-2021). Since
+  the weighting is by population, a health crisis in a single very
+  populous country can visibly dent the whole continent's curve, even
+  if most other countries on that continent were unaffected. This is
+  one advantage of the weighted approach over the naive unweighted
+  one: it reflects the lived reality of "how many years, on average,
+  did a person on this continent actually get to live" — including the
+  years lost to catastrophic events — rather than smoothing them away
+  by treating a badly-affected large country the same as an unaffected
+  small one.
+
+- **Different continents need different interpretation.** A continent
+  with one or two countries that have a large share of the total
+  population (so the weighted mean is dominated by just those
+  countries) will tell a story closer to those specific countries'
+  trajectories. A continent made of many countries of comparable size
+  will show a story that is a genuine blend of all of them. This is
+  useful context when interpreting the plotted lines: a steep change
+  in one continent's curve might really be telling us about one
+  dominant country's history, not a continent-wide phenomenon.
+
+# Extending the same logic to the whole planet
+
+The same reasoning extends seamlessly to the global level: the planet
+is simply the special case of "one continent" containing every country
+in the world. If we let $i$ now range over all $N$ countries on Earth
+(instead of just those in one continent), the identical formula
+applies:
+
+$$
+L_{\text{world}}(t) = \frac{\sum_{i=1}^{N} P_i(t)\, L_i(t)}{\sum_{i=1}^{N} P_i(t)}
+$$
+
+Conceptually this is the same weighted mean, just computed one level
+higher in the hierarchy: country $\to$ continent $\to$ world. In fact,
+there's a useful consistency property (a form of the law of total
+expectation): if we have already computed each continent's weighted
+life expectancy $L_{\text{continent}}(t)$ and each continent's total
+population $P_{\text{continent}}(t)$, we can get the world average by
+weighting *continents* by their populations instead of re-weighting
+every individual country:
+
+$$
+L_{\text{world}}(t) = \frac{\sum_{c=1}^{C} P_{\text{continent}, c}(t)\, L_{\text{continent}, c}(t)}{\sum_{c=1}^{C} P_{\text{continent}, c}(t)}
+$$
+
+where $c$ now indexes the $C$ continents. This is mathematically
+identical to summing over all countries directly, because the
+continent-level sums are themselves just sums over their constituent
+countries, grouping the terms differently doesn't change the total.
+This "nested weighting" property is a nice sanity check: it means our
+formula is internally consistent regardless of which level of
+granularity (country, continent, or world) we choose to aggregate at,
+as long as we always weight by population at the level being combined.
+
+When plotted over time, the single global curve $L_{\text{world}}(t)$
+should sit *between* the continent curves (since it is itself a
+population-weighted blend of them), closer to whichever continents
+hold the largest shares of world population. It should also show the
+same broad story as the continents individually, a long-run upward
+trend, punctuated by dips during global or large-population shocks, 
+but smoothed out somewhat, since a crisis affecting only one continent
+is diluted by the rest of the world's population when computing the
+single worldwide number.
+
+# Summary
+
+1. Life expectancy must be aggregated with population as weights, not
+   with a simple average, because life expectancy is a per-person rate
+   and countries differ in how many people that rate applies to.
+2. The resulting formula,
+   $L_{\text{continent}} = \dfrac{\sum_i P_i L_i}{\sum_i P_i}$,
+   can be derived rigorously from the definition of life expectancy as
+   an average lifespan, and is the unique formula consistent with
+   treating every individual equally regardless of their country.
+3. Plotting this quantity over time for each continent should reveal a
+   general upward trend, a narrowing of the gap between continents
+   (convergence), and visible dips corresponding to wars, famines, and
+   epidemics in populous countries.
+4. The exact same formula, applied one level higher, gives the life
+   expectancy of the entire world, and this computation is consistent
+   whether we aggregate directly from all countries or in two steps
+   through continents first.
