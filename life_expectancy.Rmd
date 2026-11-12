@@ -1,0 +1,289 @@
+---
+title: "How does life expectancy change over time for each continent?"
+author: ""
+date: ""
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+library(tidyverse)
+library(gapminder)
+library(modelr)
+library(broom)
+```
+
+The challenge:
+
+Life expectancy for a country is the mean length of life over the
+people of that country. Using the variables life expectancy (`lifeExp`)
+and population (`pop`) of a country, from the `gapminder` dataset:
+
+1. Derive a formula to compute the life expectancy of a continent (a
+   group of countries).
+2. Plot how life expectancy changed over time for each continent.
+3. Do the same for the whole planet.
+
+```{r}
+gapminder
+```
+
+Each row is one country in one year, with its `lifeExp` and `pop`
+already recorded. There is no `lifeExp` column for a continent or for
+the world, we have to build one ourselves.
+
+# Part 1: deriving the formula
+
+## Why a simple average across countries is wrong
+
+The naive approach is to just average `lifeExp` across all countries
+in a continent for a given year:
+
+$$
+L_{\text{naive}} = \frac{1}{n}\sum_{i=1}^{n} L_i
+$$
+
+This treats every country equally, no matter whether it has 1 million
+or 1 billion people. We can see this bias directly in the data: a
+tiny country gets exactly the same weight as a population giant.
+
+```{r}
+gapminder %>%
+  filter(year == 2007, continent == "Asia") %>%
+  select(country, pop, lifeExp) %>%
+  arrange(desc(pop))
+```
+
+China and India alone hold the overwhelming majority of Asia's
+population in this table, yet a plain average of the `lifeExp` column
+would let Bahrain or Bhutan move the "continent average" just as much
+as China does. That can't be right if we want a number that reflects
+how long the *typical person* on that continent lives.
+
+## The correct formula: a population-weighted mean
+
+Life expectancy is a *rate* (years per person); population is an
+*extensive* quantity (a count of people). To combine a rate correctly
+across groups of different sizes, each country's `lifeExp` must be
+weighted by its share of the continent's total population:
+
+$$
+L_{\text{continent}} =
+\frac{\sum_{i=1}^{n} P_i \, L_i}{\sum_{i=1}^{n} P_i}
+$$
+
+This is not an ad hoc fix, it falls directly out of what life
+expectancy means. If $L_i$ is the average lifespan of the $P_i$ people
+in country $i$, then $P_i L_i$ is the total number of life-years
+lived in that country. Summing $P_i L_i$ over every country in the
+continent and dividing by the continent's total population gives the
+average lifespan across *every individual on the continent*,
+regardless of which country they live in, exactly
+$L_{\text{continent}}$ above. The same formula, applied over every
+country in the world instead of just one continent, gives the
+population-weighted life expectancy of the whole planet.
+
+We implement this with a single `group_by()` + `summarise()`:
+
+```{r}
+weighted_lifeexp <- function(lifeExp, pop) {
+  sum(lifeExp * pop) / sum(pop)
+}
+```
+
+# Part 2: life expectancy over time, by continent
+
+```{r}
+continent_lifeexp <- gapminder %>%
+  group_by(continent, year) %>%
+  summarise(
+    lifeExp_weighted = weighted_lifeexp(lifeExp, pop),
+    lifeExp_naive     = mean(lifeExp),
+    pop_total         = sum(pop)
+  ) %>%
+  ungroup()
+
+continent_lifeexp
+```
+
+## The main plot
+
+```{r}
+ggplot(continent_lifeexp, aes(year, lifeExp_weighted, color = continent)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 1) +
+  labs(
+    title = "Population-weighted life expectancy by continent, 1952–2007",
+    x = "Year",
+    y = "Life expectancy (years)",
+    color = "Continent"
+  ) +
+  theme_minimal()
+```
+
+The plot shows the pattern we'd expect from first principles: every
+continent trends upward over time, but Africa starts far below the
+others and the gap between continents narrows over the decades
+(convergence), rather than all the lines staying parallel.
+
+## Does weighting actually matter here?
+
+We can check this directly by comparing the naive (unweighted) average
+to the population-weighted one, continent by continent:
+
+```{r}
+continent_lifeexp %>%
+  pivot_longer(
+    cols = c(lifeExp_weighted, lifeExp_naive),
+    names_to = "method",
+    values_to = "lifeExp"
+  ) %>%
+  ggplot(aes(year, lifeExp, color = method)) +
+  geom_line(linewidth = 1) +
+  facet_wrap(~ continent) +
+  labs(
+    title = "Weighted vs. naive (unweighted) continent life expectancy",
+    x = "Year", y = "Life expectancy (years)",
+    color = "Method"
+  ) +
+  theme_minimal()
+```
+
+The two methods diverge most on continents made of countries with very
+unequal populations (Asia, dominated by China and India; the Americas,
+dominated by the US and Brazil), and they're closest where countries
+are more similar in size. This confirms the reasoning from Part 1:
+weighting only matters when population is unevenly distributed across
+the group being aggregated.
+
+## A closer look: dips and shocks
+
+Following the same approach as the "many simple models" case study,
+fitting a linear trend of `lifeExp` against `year` for each country
+and inspecting the residuals, reveals *where* the continent-level
+dips actually come from:
+
+```{r}
+country_models <- gapminder %>%
+  group_by(country, continent) %>%
+  nest() %>%
+  mutate(
+    model = map(data, ~ lm(lifeExp ~ year, data = .x)),
+    data  = map2(data, model, ~ add_residuals(.x, .y))
+  ) %>%
+  unnest(data)
+
+ggplot(country_models, aes(year, resid, group = country)) +
+  geom_line(alpha = 0.3) +
+  geom_hline(yintercept = 0, color = "red") +
+  facet_wrap(~ continent) +
+  labs(
+    title = "Residuals of lifeExp ~ year, by country, faceted by continent",
+    x = "Year", y = "Residual (years)"
+  ) +
+  theme_minimal()
+```
+
+Africa stands out from every other continent: several countries show a
+sharp mid-series collapse away from a simple linear improvement. This
+is the HIV/AIDS mortality shock of the 1990s, and because it hit
+several populous African countries at once, it is exactly the kind of
+event that shows up as a visible dent in the population-weighted
+continent curve above, even though it affected only one continent.
+
+# Part 3: the same formula for the whole planet
+
+The planet is simply the special case of "one continent" containing
+every country on Earth. The identical weighted-mean formula applies,
+we just drop `continent` from the grouping:
+
+```{r}
+world_lifeexp <- gapminder %>%
+  group_by(year) %>%
+  summarise(
+    lifeExp_weighted = weighted_lifeexp(lifeExp, pop),
+    pop_total         = sum(pop)
+  )
+
+world_lifeexp
+```
+
+```{r}
+ggplot(world_lifeexp, aes(year, lifeExp_weighted)) +
+  geom_line(linewidth = 1.2, color = "black") +
+  geom_point(size = 1.5, color = "black") +
+  labs(
+    title = "Population-weighted world life expectancy, 1952–2007",
+    x = "Year", y = "Life expectancy (years)"
+  ) +
+  theme_minimal()
+```
+
+## Checking internal consistency: country-level vs. continent-level aggregation
+
+The weighted-mean formula has a useful consistency property (a form of
+the law of total expectation): we should get the same world average
+whether we aggregate directly over every country, or aggregate
+continents first and then combine those continent totals. Let's verify
+this numerically:
+
+```{r}
+world_from_continents <- continent_lifeexp %>%
+  group_by(year) %>%
+  summarise(lifeExp_from_continents = weighted_lifeexp(lifeExp_weighted, pop_total))
+
+world_lifeexp %>%
+  left_join(world_from_continents, by = "year") %>%
+  mutate(difference = lifeExp_weighted - lifeExp_from_continents)
+```
+
+The `difference` column is (up to floating-point rounding) zero for
+every year: aggregating country \(\to\) world directly and aggregating
+country \(\to\) continent \(\to\) world give identical results, exactly
+as the formula predicts.
+
+## Comparing the world curve to the continents
+
+```{r}
+continent_lifeexp %>%
+  select(continent, year, lifeExp_weighted) %>%
+  bind_rows(
+    world_lifeexp %>% mutate(continent = "World") %>%
+      select(continent, year, lifeExp_weighted)
+  ) %>%
+  ggplot(aes(year, lifeExp_weighted, color = continent)) +
+  geom_line(linewidth = 1) +
+  labs(
+    title = "World life expectancy vs. each continent",
+    x = "Year", y = "Life expectancy (years)", color = ""
+  ) +
+  theme_minimal()
+```
+
+As expected, the world curve sits between the continent curves,
+pulled closest to Asia and the Americas, the continents holding the
+largest shares of world population, and it shows the same long-run
+upward trend as the continents individually, smoothed because a shock
+confined to one continent is diluted by the rest of the world's
+population when averaged globally.
+
+# Conclusion
+
+1. Life expectancy must be aggregated with population as weights, 
+   $L_{\text{continent}} = \dfrac{\sum_i P_i L_i}{\sum_i P_i}$,  not
+   with a plain average, because life expectancy is a per-person rate
+   and countries differ hugely in how many people that rate applies
+   to.
+2. Computing this for each continent and year shows a long-run upward
+   trend, convergence between continents, and a sharp dip in Africa
+   in the 1990s driven by HIV/AIDS, visible in the residuals of simple
+   per-country linear models.
+3. The identical formula, applied over every country on Earth, gives
+   the world's life expectancy, and this is numerically consistent
+   whether computed directly from countries or in two steps through
+   continents, confirming the formula is internally coherent across
+   levels of aggregation.
